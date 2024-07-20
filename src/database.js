@@ -164,6 +164,7 @@ async function getList() {
         driver: sqlite3.Database
     });
     try {
+        await db.run('DELETE FROM LINK_TABLE WHERE (EXPIRE_AT <> -1 AND EXPIRE_AT <= ?)', Date.now());
         const result = await db.all('SELECT * FROM LINK_TABLE');
         await db.close();
         return {status: "success", reason: "", results: result};
