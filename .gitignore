@@ -194,5 +194,5 @@ Temporary Items
 .apdisk
 
 # Secret files
-./res
-./config
+/res
+/config
