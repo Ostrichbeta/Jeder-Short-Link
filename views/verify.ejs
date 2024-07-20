@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wait a minute!</title>
+    <link rel="stylesheet" href="https://cdn.simplecss.org/simple.min.css">
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    <script>
+        function turnstileCallback(token) {
+            window.location.replace(window.location.origin + "/<%= link %>?token=" + token);
+        }
+    </script>
+</head>
+<body>
+    <section>
+        <h2>Whoa whoa whoa, wait here!</h2>
+        <p>It seems that you made too many requests at the same time, don't worry, this is just a simple verification to block bots.</p>
+        <p><span lang="zh-Hant">你短時間內傳送了過多的請求，別擔心，這只是一個小小的驗證，稍等就可將你帶去目標站。</span></p>
+        <div class="cf-turnstile" data-sitekey="0x4AAAAAAAfdaGj21PlUyq_G" data-callback="turnstileCallback"></div>
+    </section>
+    <section>
+        <p>Verification brought you by CloudFlare</p>
+    </section>
+</body>
+</html>
