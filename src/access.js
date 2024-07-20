@@ -3,8 +3,8 @@ const router = express.Router();
 const authCheck = require("./security").authCheck;
 const database = require("./database");
 const path = require("path");
-const axios = require("axios");
 const nconf = require("nconf");
+const { accessFrequencyCheck } = require("./security");
 
 let configFile = path.join(path.dirname(__dirname), 'config', 'config.json');
 
@@ -154,53 +154,8 @@ router.get("/getlist", authCheck, async (req, res) => {
     }
 });
 
-router.get("/:link", async (req, res, next) => {
+router.get("/:link", accessFrequencyCheck, async (req, res) => {
     try {
-        let ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-        let accessResult = await database.getIPLog(ip, 60000);
-        if (accessResult.length <= 3) {
-            next("route");
-        } else {
-            console.log("Trunstile invoked.");
-            if (!req.query.token) {
-                // No turnstile token provided
-                res.render("verify", {
-                    link: req.params.link
-                });
-            } else {
-                const cfURL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
-                let cloudflareVerificationResult = await axios.post(cfURL, {
-                    secret: nconf.get("Turnstile:secret"),
-                    response: req.query.token,
-                    remoteip: ip
-                });
-                if (cloudflareVerificationResult.status == 200 && cloudflareVerificationResult.data["success"] == true) {
-                    next("route");
-                } else {
-                    console.warn("[Access] Client from " + ip + " accessed /" + req.params.link + " failed the verification at " + new Date().toJSON());
-                    res.status(403).json({
-                        status: "failed",
-                        reason: "Turnstile verification failed"
-                    });
-                    return;
-                }
-            }
-            return;
-        }
-    } catch (error) {
-        console.error(error);
-        res.send(500).json({
-            status: "failed",
-            reason: "Interna1 server error"
-        });
-        return;
-    }
-
-});
-
-router.get("/:link", async (req, res) => {
-    try {
-        let ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
         let getLinkResult = await database.getLink(req.params.link);
         if (getLinkResult["status"] == "success") {
             // res.status(200).json({
@@ -208,11 +163,11 @@ router.get("/:link", async (req, res) => {
             //     reason: "",
             //     link: getLinkResult["results"][0]['TARGET_LINK']
             // });'
-            database.writeLog(getLinkResult["results"][0]["id"], req.params.link, ip);
+            database.writeLog(getLinkResult["results"][0]["id"], req.params.link, res.locals.ip);
             res.redirect(302, getLinkResult["results"][0]['TARGET_LINK']);
             return;
         } else {
-            database.writeLog("notfound", req.params.link, ip);
+            database.writeLog("notfound", req.params.link, res.locals.ip);
             res.status(404).json({
                 status: "failed",
                 reason: "Not found"

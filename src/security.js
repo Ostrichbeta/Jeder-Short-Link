@@ -8,6 +8,7 @@ const { error } = require("console");
 const database = require("./database");
 const nconf = require("nconf");
 const fsExists = require("fs.promises.exists");
+const axios = require("axios");
 
 let configFile = path.join(path.dirname(__dirname), 'config', 'config.json');
 let secretFile = path.join(path.dirname(__dirname), 'res', 'secret');
@@ -163,11 +164,42 @@ async function authCheck(req, res, next) {
 
 async function accessFrequencyCheck(req, res, next) {
     try {
-        let ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-        const ipCheckResult = await database.getIPLog(ip);
-
+        let xffList = req.headers['x-forwarded-for'] ? req.headers['x-forwarded-for'].toString().split(", ")[0] : undefined;
+        let ip = xffList || req.socket.remoteAddress;
+        res.locals.ip = ip;
+        let accessResult = await database.getIPLog(ip, 60000);
+        if (accessResult.length <= 3) {
+            next();
+        } else {
+            console.log("Trunstile invoked.");
+            if (!req.query.token) {
+                // No turnstile token provided
+                res.render("verify", {
+                    link: req.params.link
+                });
+            } else {
+                const cfURL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
+                let cloudflareVerificationResult = await axios.post(cfURL, {
+                    secret: nconf.get("Turnstile:secret"),
+                    response: req.query.token,
+                    remoteip: ip
+                });
+                if (cloudflareVerificationResult.status == 200 && cloudflareVerificationResult.data["success"] == true) {
+                    next();
+                } else {
+                    console.warn("[Access] Client from " + ip + " accessed /" + req.params.link + " failed the verification at " + new Date().toJSON());
+                    res.status(403).json({
+                        status: "failed",
+                        reason: "Turnstile verification failed"
+                    });
+                    return;
+                }
+            }
+            return;
+        }
     } catch (error) {
-        res.status(500).json({
+        console.error(error);
+        res.send(500).json({
             status: "failed",
             reason: "Interna1 server error"
         });
@@ -180,3 +212,4 @@ module.exports.checkRes = checkRes;
 module.exports.checkSecret = checkSecret;
 module.exports.checkSecretExists = checkSecretExists;
 module.exports.authCheck = authCheck;
+module.exports.accessFrequencyCheck = accessFrequencyCheck;
