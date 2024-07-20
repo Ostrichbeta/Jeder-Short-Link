@@ -31,9 +31,10 @@ async function sleep(ms) {
     await security.checkConfig();
 
     await databaseObj.initDatabase();
-    console.log(await databaseObj.getList());
+    let shortLinkLists = await databaseObj.getList();
+    console.log(`[Server] There are currently ${shortLinkLists} link(s) in the database.`);
 
     await app.listen(port, () => {
-        console.log(`Listening on port ${ port }.`);
+        console.log(`[Server] Listening on port ${ port }.`);
     });
 })();
