@@ -5,6 +5,7 @@ const database = require("./database");
 const path = require("path");
 const nconf = require("nconf");
 const { accessFrequencyCheck } = require("./security");
+const uap = require('ua-parser-js');
 
 let configFile = path.join(path.dirname(__dirname), 'config', 'config.json');
 
@@ -156,6 +157,8 @@ router.get("/getlist", authCheck, async (req, res) => {
 
 router.get("/:link", accessFrequencyCheck, async (req, res) => {
     try {
+        let ua = uap(req.headers["user-agent"]); // Get user agent to check if the request is come from browser
+
         let getLinkResult = await database.getLink(req.params.link);
         if (getLinkResult["status"] == "success") {
             // res.status(200).json({
@@ -168,11 +171,17 @@ router.get("/:link", accessFrequencyCheck, async (req, res) => {
             return;
         } else {
             database.writeLog("notfound", req.params.link, res.locals.ip);
-            res.status(404).json({
-                status: "failed",
-                reason: "Not found"
-            });
-            return;
+            if (!ua.browser.name) {
+                // Undefined browser
+                res.status(404).json({
+                    status: "failed",
+                    reason: "Not found"
+                });
+                return;
+            } else {
+                res.render("notfound");
+                return;
+            }
         }
     } catch (error) {
         console.error(error);
