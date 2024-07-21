@@ -6,28 +6,37 @@ const path = require("path");
 const HRI = require("human-readable-ids").hri;
 const randomstring = require("randomstring");
 
+const winston = require("winston");
+const logger = winston.loggers.get("databaseLogger");
+
 const sqlitePath = path.join(path.dirname(__dirname), 'res', 'database.db');
 const logDBPath = path.join(path.dirname(__dirname), 'res', 'log.db');
-console.debug(sqlitePath)
 
 async function initDatabase() {
     const db = await open({
         filename: sqlitePath,
         driver: sqlite3.Database
     })
-    console.debug("Check and create the link database in " + sqlitePath + "...");
+    logger.debug("Check and create the link database in " + sqlitePath + "...");
+    // Create database
     await db.run("CREATE TABLE IF NOT EXISTS LINK_TABLE (id TEXT PRIMARY KEY, name TEXT, SOURCE_LINK TEXT NOT NULL, TARGET_LINK TEXT NOT NULL, CREATED_AT INTEGER NOT NULL, EXPIRE_AT INTEGER DEFAULT -1 NOT NULL)");
+    // Add click count
+    try {
+        await db.exec("ALTER TABLE LINK_TABLE ADD COLUMN CLICKCOUNT INTEGER DEFAULT 0");
+    } catch (error) {
+        logger.debug("DB click count patch added.");
+    }
     await db.close();
-    console.debug("Link database closed.");
+    logger.debug("Link database closed.");
 
     const logdb = await open({
         filename: logDBPath,
         driver: sqlite3.Database
     });
-    console.debug("Check and create the log database in " + logDBPath + "...");
+    logger.debug("Check and create the log database in " + logDBPath + "...");
     await logdb.run("CREATE TABLE IF NOT EXISTS LOG_TABLE (id TEXT NOT NULL, SOURCE_LINK TEXT NOT NULL, IP TEXT NOT NULL, ACCESSED_AT INTEGER NOT NULL)");
     await logdb.close();
-    console.debug("Link database closed.");
+    logger.debug("Link database closed.");
 }
 
 async function addLink(name, targetLink, expireAt = -1) {
@@ -72,7 +81,7 @@ async function addLink(name, targetLink, expireAt = -1) {
         await db.close();
         return {status: "success", reason: "", source: "/" + generatedLink, target: targetLink, created_at: Date.now(), expire_at: expireAt};
     } catch (error) {
-        console.error(error);
+        logger.error(error);
         return {status: "failed", reason: "Internal Error"};
     }
 }
@@ -92,7 +101,7 @@ async function getLink(source) {
             return {status: "failed", reason: "Not found", results: []};
         }
     } catch (error) {
-        console.error(error);
+        logger.error(error);
         return {status: "failed", reason: "Internal Error"};
     }
 }
@@ -112,7 +121,7 @@ async function getID(id) {
             return {status: "failed", reason: "Not found", results: []};
         }
     } catch (error) {
-        console.error(error);
+        logger.error(error);
         return {status: "failed", reason: "Internal Error"};
     }
 }
@@ -133,7 +142,7 @@ async function removeLinkFromID(id) {
             return {status: "failed", reason: "Not found"};
         }
     } catch (error) {
-        console.error(error);
+        logger.error(error);
         return {status: "failed", reason: "Internal Error"};
     }
 }
@@ -153,7 +162,7 @@ async function removeLinkFromSourceLink(sourceLink) {
             return {status: "failed", reason: "Not found"};
         }
     } catch (error) {
-        console.error(error);
+        logger.error(error);
         return {status: "failed", reason: "Internal Error"};
     }
 }
@@ -169,7 +178,7 @@ async function getList() {
         await db.close();
         return {status: "success", reason: "", results: result};
     } catch (error) {
-        console.error(error);
+        logger.error(error);
         return {status: "failed", reason: "Internal Error"};
     }
 }
@@ -181,10 +190,9 @@ async function writeLog(id, source, ip) {
     });
     try {
         await logdb.run("INSERT INTO LOG_TABLE (id, SOURCE_LINK, IP, ACCESSED_AT) VALUES (?, ?, ?, ?)", [id, source, ip, Date.now()]);
-        console.log("[Access] Client from " + ip + " accessed /" + source + " (" + id + ") at " + new Date().toJSON());
         await logdb.close();
     } catch (error) {
-        console.error(error);
+        logger.error(error);
         return {status: "failed", reason: "Internal Error"};
     }
 }
@@ -206,8 +214,43 @@ async function getIPLog(ip, interval = -1) {
         }
         
     } catch (error) {
-        console.error(error);
+        logger.error(error);
         return {status: "failed", reason: "Internal Error"};
+    }
+}
+
+async function addCLickCount(id) {
+    const db = await open({
+        filename: sqlitePath,
+        driver: sqlite3.Database
+    });
+    try {
+        let queryResult = await db.all("SELECT * FROM LINK_TABLE WHERE id = ?", [id]);
+        if (queryResult.length == 0) {
+            logger.error(`The given id ${id} is invalid.`);
+            return;
+        }
+        let currentClickCount = queryResult[0]["CLICKCOUNT"];
+        await db.run("UPDATE LINK_TABLE SET CLICKCOUNT = ? WHERE id = ?", [currentClickCount + 1, id]);
+    } catch (error) {
+        logger.error(error);
+    }
+}
+
+async function resetCLickCount(id) {
+    const db = await open({
+        filename: sqlitePath,
+        driver: sqlite3.Database
+    });
+    try {
+        let queryResult = await db.all("SELECT * FROM LINK_TABLE WHERE id = ?", [id]);
+        if (queryResult.length == 0) {
+            logger.error(`The given id ${id} is invalid.`);
+            return;
+        }
+        await db.run("UPDATE LINK_TABLE SET CLICKCOUNT = ? WHERE id = ?", [0, id]);
+    } catch (error) {
+        logger.error(error);
     }
 }
 
@@ -220,7 +263,7 @@ async function keepLog(retentionTime) {
         await logdb.run("DELETE FROM LOG_TABLE WHERE ACCESSED_AT <= ?", Date.now() - retentionTime);
         await logdb.close();
     } catch (error) {
-        console.error(error);
+        logger.error(error);
         return {status: "failed", reason: "Internal Error"};
     }
 }
@@ -235,3 +278,5 @@ module.exports.getList = getList;
 module.exports.writeLog = writeLog;
 module.exports.getIPLog = getIPLog;
 module.exports.keepLog = keepLog;
+module.exports.addCLickCount = addCLickCount;
+module.exports.resetCLickCount = resetCLickCount;

@@ -2,6 +2,10 @@ const express = require("express");
 const args = require("yargs").argv;
 const cors = require("cors");
 const tpu = require("tcp-port-used");
+const logger = require("./src/logger");
+
+const winston = require("winston");
+const mainLogger = winston.loggers.get("mainLogger");
 
 const security = require("./src/security");
 const databaseObj = require("./src/database");
@@ -26,15 +30,16 @@ async function sleep(ms) {
         port = port + 1;
     }
 
+    await logger.checkLog();
     await security.checkRes();
     await security.checkSecretExists();
     await security.checkConfig();
 
     await databaseObj.initDatabase();
     let shortLinkLists = await databaseObj.getList();
-    console.log(`[Server] There are currently ${shortLinkLists.results.length} link(s) in the database.`);
+    mainLogger.info(`[Server] There are currently ${shortLinkLists.results.length} link(s) in the database.`);
 
     await app.listen(port, () => {
-        console.log(`[Server] Listening on port ${ port }.`);
+        mainLogger.info(`[Server] Listening on port ${ port }.`);
     });
 })();

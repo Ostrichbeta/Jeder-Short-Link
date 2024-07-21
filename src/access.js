@@ -7,11 +7,14 @@ const nconf = require("nconf");
 const { accessFrequencyCheck } = require("./security");
 const uap = require('ua-parser-js');
 
+const winston = require("winston");
+const logger = winston.loggers.get("accessLogger");
+
 let configFile = path.join(path.dirname(__dirname), 'config', 'config.json');
 
 nconf.file({file: configFile});
 
-router.get("/create", authCheck, async (req, res) => {
+router.get("/api/create", authCheck, async (req, res) => {
     if (!(req.query.name && req.query.target)) {
         res.status(403).json({
             status: "failed",
@@ -28,13 +31,23 @@ router.get("/create", authCheck, async (req, res) => {
             return;
         } else {
             if (!req.query.expireat) {
-                let createResult = await database.addLink(req.query.name, req.query.target);
-                if (createResult["status"] == "success") {
-                    res.status(200).json(createResult);
+                if (req.query.expireafter && parseInt(req.query.expireafter) !== NaN) {
+                    let createResult = await database.addLink(req.query.name, req.query.target, Date.now() + parseInt(req.query.expireafter));
+                    if (createResult["status"] == "success") {
+                        res.status(200).json(createResult);
+                    } else {
+                        res.status(403).json(createResult);
+                    }
+                    return;
                 } else {
-                    res.status(403).json(createResult);
+                    let createResult = await database.addLink(req.query.name, req.query.target);
+                    if (createResult["status"] == "success") {
+                        res.status(200).json(createResult);
+                    } else {
+                        res.status(403).json(createResult);
+                    }
+                    return;
                 }
-                return;
             } else {
                 let createResult = await database.addLink(req.query.name, req.query.target, parseInt(req.query.expireat) * 1000);
                 if (createResult["status"] == "success") {
@@ -46,7 +59,7 @@ router.get("/create", authCheck, async (req, res) => {
             }
         }
     } catch (error) {
-        console.error(error);
+        logger.error(error);
         res.send(500).json({
             status: "failed",
             reason: "Internal server error"
@@ -55,7 +68,7 @@ router.get("/create", authCheck, async (req, res) => {
     }
 });
 
-router.get("/remove", authCheck, async (req, res) => {
+router.get("/api/remove", authCheck, async (req, res) => {
     if (!(req.query.id || req.query.source)) {
         res.status(403).json({
             status: "failed",
@@ -87,7 +100,7 @@ router.get("/remove", authCheck, async (req, res) => {
             return;
         }
     } catch (error) {
-        console.error(error);
+        logger.error(error);
         res.send(500).json({
             status: "failed",
             reason: "Internal server error"
@@ -96,7 +109,7 @@ router.get("/remove", authCheck, async (req, res) => {
     }
 });
 
-router.get("/getdetail", authCheck, async (req, res) => {
+router.get("/api/getdetail", authCheck, async (req, res) => {
     if (!(req.query.id || req.query.source)) {
         res.status(403).json({
             status: "failed",
@@ -128,7 +141,7 @@ router.get("/getdetail", authCheck, async (req, res) => {
             return;
         }
     } catch (error) {
-        console.error(error);
+        logger.error(error);
         res.send(500).json({
             status: "failed",
             reason: "Internal server error"
@@ -137,7 +150,7 @@ router.get("/getdetail", authCheck, async (req, res) => {
     }
 });
 
-router.get("/getlist", authCheck, async (req, res) => {
+router.get("/api/getlist", authCheck, async (req, res) => {
     try {
         let getListResult = await database.getList();
         if (getListResult["status"] == "success") {
@@ -146,7 +159,36 @@ router.get("/getlist", authCheck, async (req, res) => {
             res.status(403).json(getListResult);
         }
     } catch (error) {
-        console.error(error);
+        logger.error(error);
+        res.send(500).json({
+            status: "failed",
+            reason: "Internal server error"
+        });
+        return;
+    }
+});
+
+router.get("/api/resetcount", authCheck, async (req, res) => {
+    if (!(req.query.id)) {
+        res.status(403).json({
+            status: "failed",
+            reason: "Too few arguments"
+        });
+        return;
+    }
+    try {
+        let getIDResult = await database.getID(req.query.id);
+        if (getIDResult["status"] == "success") {
+            await database.resetCLickCount(getIDResult["results"][0]["id"]);
+            res.status(200).json(getIDResult);
+        } else {
+            res.status(404).json({
+                status: "failed",
+                reason: "Not found"
+            });
+        }
+    } catch (error) {
+        logger.error(error);
         res.send(500).json({
             status: "failed",
             reason: "Internal server error"
@@ -166,11 +208,14 @@ router.get("/:link", accessFrequencyCheck, async (req, res) => {
             //     reason: "",
             //     link: getLinkResult["results"][0]['TARGET_LINK']
             // });'
-            database.writeLog(getLinkResult["results"][0]["id"], req.params.link, res.locals.ip);
+            logger.info("Client from " + res.locals.ip + " accessed /" + req.params.link + " (" + getLinkResult["results"][0]["id"] + ")");
+            await database.writeLog(getLinkResult["results"][0]["id"], req.params.link, res.locals.ip);
+            await database.addCLickCount(getLinkResult["results"][0]["id"]);
             res.redirect(302, getLinkResult["results"][0]['TARGET_LINK']);
             return;
         } else {
-            database.writeLog("notfound", req.params.link, res.locals.ip);
+            logger.info("Client from " + res.locals.ip + " accessed /" + req.params.link + " (not found)");
+            await database.writeLog("notfound", req.params.link, res.locals.ip);
             if (!ua.browser.name) {
                 // Undefined browser
                 res.status(404).json({
@@ -184,7 +229,7 @@ router.get("/:link", accessFrequencyCheck, async (req, res) => {
             }
         }
     } catch (error) {
-        console.error(error);
+        logger.error(error);
         res.send(500).json({
             status: "failed",
             reason: "Internal server error"
