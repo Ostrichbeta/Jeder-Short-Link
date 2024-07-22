@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
-const authCheck = require("./security").authCheck;
+const tokenCheck = require("./security").tokenCheck;
+const sessionCheck = require("./security").sessionCheck;
 const database = require("./database");
 const path = require("path");
 const nconf = require("nconf");
@@ -14,7 +15,7 @@ let configFile = path.join(path.dirname(__dirname), 'config', 'config.json');
 
 nconf.file({file: configFile});
 
-router.get("/api/create", authCheck, async (req, res) => {
+router.get("/api/create", sessionCheck, async (req, res) => {
     if (!(req.query.name && req.query.target)) {
         res.status(403).json({
             status: "failed",
@@ -59,7 +60,7 @@ router.get("/api/create", authCheck, async (req, res) => {
             }
         }
     } catch (error) {
-        logger.error(error);
+        logger.error(error.stack);
         res.send(500).json({
             status: "failed",
             reason: "Internal server error"
@@ -68,7 +69,7 @@ router.get("/api/create", authCheck, async (req, res) => {
     }
 });
 
-router.get("/api/remove", authCheck, async (req, res) => {
+router.get("/api/remove", sessionCheck, async (req, res) => {
     if (!(req.query.id || req.query.source)) {
         res.status(403).json({
             status: "failed",
@@ -100,7 +101,7 @@ router.get("/api/remove", authCheck, async (req, res) => {
             return;
         }
     } catch (error) {
-        logger.error(error);
+        logger.error(error.stack);
         res.send(500).json({
             status: "failed",
             reason: "Internal server error"
@@ -109,8 +110,8 @@ router.get("/api/remove", authCheck, async (req, res) => {
     }
 });
 
-router.get("/api/getdetail", authCheck, async (req, res) => {
-    if (!(req.query.id || req.query.source)) {
+router.get("/api/getdetail", sessionCheck, async (req, res) => {
+    if (!(req.query.id || req.query.source || req.query.target)) {
         res.status(403).json({
             status: "failed",
             reason: "Too few arguments"
@@ -140,8 +141,19 @@ router.get("/api/getdetail", authCheck, async (req, res) => {
             }
             return;
         }
+        
+        if (req.query.target) {
+            // Check target last
+            let getSourceResult = await database.getTarget(req.query.target);
+            if (getSourceResult["status"] == "success") {
+                res.status(200).json(getSourceResult);
+            } else {
+                res.status(403).json(getSourceResult);
+            }
+            return;
+        }
     } catch (error) {
-        logger.error(error);
+        logger.error(error.stack);
         res.send(500).json({
             status: "failed",
             reason: "Internal server error"
@@ -150,7 +162,7 @@ router.get("/api/getdetail", authCheck, async (req, res) => {
     }
 });
 
-router.get("/api/getlist", authCheck, async (req, res) => {
+router.get("/api/getlist", sessionCheck, async (req, res) => {
     try {
         let getListResult = await database.getList();
         if (getListResult["status"] == "success") {
@@ -159,8 +171,8 @@ router.get("/api/getlist", authCheck, async (req, res) => {
             res.status(403).json(getListResult);
         }
     } catch (error) {
-        logger.error(error);
-        res.send(500).json({
+        logger.error(error.stack);
+        res.status(500).json({
             status: "failed",
             reason: "Internal server error"
         });
@@ -168,7 +180,7 @@ router.get("/api/getlist", authCheck, async (req, res) => {
     }
 });
 
-router.get("/api/resetcount", authCheck, async (req, res) => {
+router.get("/api/resetcount", sessionCheck, async (req, res) => {
     if (!(req.query.id)) {
         res.status(403).json({
             status: "failed",
@@ -179,7 +191,7 @@ router.get("/api/resetcount", authCheck, async (req, res) => {
     try {
         let getIDResult = await database.getID(req.query.id);
         if (getIDResult["status"] == "success") {
-            await database.resetCLickCount(getIDResult["results"][0]["id"]);
+            await database.resetClickCount(getIDResult["results"][0]["id"]);
             res.status(200).json(getIDResult);
         } else {
             res.status(404).json({
@@ -188,7 +200,7 @@ router.get("/api/resetcount", authCheck, async (req, res) => {
             });
         }
     } catch (error) {
-        logger.error(error);
+        logger.error(error.stack);
         res.send(500).json({
             status: "failed",
             reason: "Internal server error"
@@ -196,6 +208,74 @@ router.get("/api/resetcount", authCheck, async (req, res) => {
         return;
     }
 });
+
+router.post("/api/adminlogin", tokenCheck, async (req, res) => {
+    try {
+        await new Promise((resolve, reject) => {
+            req.session.regenerate((err) => {
+                if (err) {
+                    reject(err);
+                }
+
+                req.session.user = "root";
+
+                logger.info("Root user logged in");
+
+                req.session.save((err) => {
+                    if (err) {
+                        reject(err);
+                    }
+                    resolve(undefined);
+                });
+            });
+        });
+        res.status(200).json({
+            status: "succes",
+            reason: ""
+        });
+        return;
+    } catch (error) {
+        logger.error(error.stack);
+        res.status(500).json({
+            status: "failed",
+            reason: "Internal server error"
+        });
+    }
+});
+
+router.use("/api/logout", sessionCheck, async (req, res, next) => {
+    if (req.headers.authorization) {
+        res.status(423).json({
+            status: "failed",
+            reason: "Unexcepted ending"
+        });
+        return;
+    } else {
+        next();
+    }
+}, async (req, res) => {
+    try {
+        await new Promise((resolve, reject) => {
+            req.session.destroy((err) => {
+                if (err) {
+                    reject(err);
+                }
+                resolve(undefined);
+            });
+        });
+        res.status(200).json({
+            status: "success",
+            reason: "",
+            goodbye: true
+        });
+    } catch (error) {
+        logger.error(error);
+        res.status(500).json({
+            status: "failed",
+            reason: "Internal server error"
+        });
+    }
+})
 
 router.get("/:link", accessFrequencyCheck, async (req, res) => {
     try {
@@ -210,7 +290,7 @@ router.get("/:link", accessFrequencyCheck, async (req, res) => {
             // });'
             logger.info("Client from " + res.locals.ip + " accessed /" + req.params.link + " (" + getLinkResult["results"][0]["id"] + ")");
             await database.writeLog(getLinkResult["results"][0]["id"], req.params.link, res.locals.ip);
-            await database.addCLickCount(getLinkResult["results"][0]["id"]);
+            await database.addClickCount(getLinkResult["results"][0]["id"]);
             res.redirect(302, getLinkResult["results"][0]['TARGET_LINK']);
             return;
         } else {
@@ -229,7 +309,7 @@ router.get("/:link", accessFrequencyCheck, async (req, res) => {
             }
         }
     } catch (error) {
-        logger.error(error);
+        logger.error(error.stack);
         res.send(500).json({
             status: "failed",
             reason: "Internal server error"

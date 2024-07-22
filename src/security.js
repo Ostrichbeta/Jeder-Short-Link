@@ -85,7 +85,7 @@ async function checkConfig() {
     nconf.save();
 
     if (!trunstileCheck) {
-        logger.debug("[Turnstile] Turnstile config error, the program will now exit.");
+        logger.error("Turnstile config error, the program will now exit.");
         exit(127);
     }
 
@@ -95,8 +95,9 @@ async function checkConfig() {
 async function checkSecretExists(forceRegen = false) {
     if (fs.existsSync(secretFile) && fs.lstatSync(secretFile).isFile() && (!forceRegen)) {
         // File (if it is a file exists)
-        logger.debug("Key file exists, passed thie check.");
-        return 1;
+        logger.debug("Key file exists, passed the check.");
+        let secretByte = await fs.promises.readFile(secretFile);
+        return secretByte.toString();
     }
     if (fs.existsSync(secretFile)) {
         if (fs.lstatSync(secretFile).isDirectory()) {
@@ -107,17 +108,18 @@ async function checkSecretExists(forceRegen = false) {
     }
     
     // Token generation
+    let hashedToken = ""
     try {
         let tokenBytes = await crypto.randomBytes(32);
         let hexstr = tokenBytes.toString('hex');
         logger.info(`Token generated, please copy and save this string in safe place, it will be shown ONLY ONCE!`);
         logger.info(`Token: ${hexstr}`);
-        let hashedToken = await bcrypt.hash(hexstr, 10);
+        hashedToken = await bcrypt.hash(hexstr, 10);
         await fs.promises.writeFile(secretFile, hashedToken);
     } catch (error) {
         throw error;
     }
-    return 0;
+    return hashedToken.toString();
 }
 
 async function checkSecret(str) {
@@ -134,7 +136,7 @@ async function checkSecret(str) {
             let secretByte = await fs.promises.readFile(secretFile);
             secret = secretByte.toString();
         } catch (error) {
-            logger.error(error);
+            logger.error(error.stack);
         }
     }
     if (await bcrypt.compare(str, secret)) {
@@ -144,7 +146,7 @@ async function checkSecret(str) {
     }
 }
 
-async function authCheck(req, res, next) {
+async function tokenCheck(req, res, next) {
     if (!req.headers.authorization) {
         res.status(401).json({
             status: "failed",
@@ -152,12 +154,12 @@ async function authCheck(req, res, next) {
         });
         return;
     }
-
+    
     let isTokenValid = await checkSecret(req.headers.authorization.slice(7));
     if (isTokenValid) {
         next();
     } else {
-        res.status(403).json({
+        res.status(403).json({  
             status: "failed",
             reason: "Invalid Token"
         });
@@ -203,10 +205,46 @@ async function accessFrequencyCheck(req, res, next) {
             return;
         }
     } catch (error) {
-        logger.error(error);
+        logger.error(error.stack);
         res.send(500).json({
             status: "failed",
             reason: "Interna1 server error"
+        });
+        return;
+    }
+}
+
+async function sessionCheck(req, res, next) {
+    try {
+        if (req.session.user) {
+            if (req.session.user == "root") {
+                res.locals.bypassTokenCheck = true;
+                next();
+            } else {
+                res.status(401).json({
+                    status: "failed",
+                    reason: "Unauthorized"
+                });
+                return;
+            }
+            // TODO: Other user
+        } else {
+            if (req.headers.authorization) {
+                // No session, jump to token check
+                return tokenCheck(req, res, next);
+            } else {
+                res.status(401).json({
+                    status: "failed",
+                    reason: "Unauthorized"
+                });
+                return;
+            }
+        }
+    } catch (error) {
+        logger.error(error.stack);
+        res.status(500).json({
+            status: "failed",
+            reason: "Internal Server Error"
         });
         return;
     }
@@ -216,5 +254,6 @@ module.exports.checkConfig = checkConfig;
 module.exports.checkRes = checkRes;
 module.exports.checkSecret = checkSecret;
 module.exports.checkSecretExists = checkSecretExists;
-module.exports.authCheck = authCheck;
+module.exports.tokenCheck = tokenCheck;
 module.exports.accessFrequencyCheck = accessFrequencyCheck;
+module.exports.sessionCheck = sessionCheck;

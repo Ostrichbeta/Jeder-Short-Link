@@ -79,9 +79,10 @@ async function addLink(name, targetLink, expireAt = -1) {
         await stmt.run([id, name, generatedLink, targetLink, Date.now(), expireAt]);
         await stmt.finalize();
         await db.close();
-        return {status: "success", reason: "", source: "/" + generatedLink, target: targetLink, created_at: Date.now(), expire_at: expireAt};
+        logger.debug(`A new link /${generatedLink} (ID: ${id}) added, target ${targetLink} expire at ${expireAt}`);
+        return {status: "success", reason: "", id: id, source: "/" + generatedLink, target: targetLink, created_at: Date.now(), expire_at: expireAt};
     } catch (error) {
-        logger.error(error);
+        logger.error(error.stack);
         return {status: "failed", reason: "Internal Error"};
     }
 }
@@ -101,7 +102,7 @@ async function getLink(source) {
             return {status: "failed", reason: "Not found", results: []};
         }
     } catch (error) {
-        logger.error(error);
+        logger.error(error.stack);
         return {status: "failed", reason: "Internal Error"};
     }
 }
@@ -121,7 +122,27 @@ async function getID(id) {
             return {status: "failed", reason: "Not found", results: []};
         }
     } catch (error) {
-        logger.error(error);
+        logger.error(error.stack);
+        return {status: "failed", reason: "Internal Error"};
+    }
+}
+
+async function getTarget(target) {
+    const db = await open({
+        filename: sqlitePath,
+        driver: sqlite3.Database
+    });
+    try {
+        await db.run('DELETE FROM LINK_TABLE WHERE (EXPIRE_AT <> -1 AND EXPIRE_AT <= ?)', Date.now());
+        const result = await db.all('SELECT * FROM LINK_TABLE WHERE instr(TARGET_LINK, ?) > 0;', target);
+        await db.close();
+        if (result.length > 0) {
+            return {status: "success", reason: "", results: result};
+        } else {
+            return {status: "failed", reason: "Not found", results: []};
+        }
+    } catch (error) {
+        logger.error(error.stack);
         return {status: "failed", reason: "Internal Error"};
     }
 }
@@ -136,13 +157,14 @@ async function removeLinkFromID(id) {
         if (result.length > 0) {
             await db.run('DELETE FROM LINK_TABLE WHERE id = ?', id);
             await db.close();
+            logger.debug(`Link /${result[0]["SOURCE_LINK"]} (ID: ${result[0]["id"]}) removed, target ${result[0]["TARGET_LINK"]}`);
             return {status: "success", reason: "", results: result};
         } else {
             await db.close();
             return {status: "failed", reason: "Not found"};
         }
     } catch (error) {
-        logger.error(error);
+        logger.error(error.stack);
         return {status: "failed", reason: "Internal Error"};
     }
 }
@@ -156,13 +178,14 @@ async function removeLinkFromSourceLink(sourceLink) {
         if (result.length > 0) {
             await db.run('DELETE FROM LINK_TABLE WHERE SOURCE_LINK = ?', sourceLink);
             await db.close();
+            logger.debug(`Link /${result[0]["SOURCE_LINK"]} (ID: ${result[0]["id"]}) removed, target ${result[0]["TARGET_LINK"]}`);
             return {status: "success", reason: "", results: result};
         } else {
             await db.close();
             return {status: "failed", reason: "Not found"};
         }
     } catch (error) {
-        logger.error(error);
+        logger.error(error.stack);
         return {status: "failed", reason: "Internal Error"};
     }
 }
@@ -178,7 +201,7 @@ async function getList() {
         await db.close();
         return {status: "success", reason: "", results: result};
     } catch (error) {
-        logger.error(error);
+        logger.error(error.stack);
         return {status: "failed", reason: "Internal Error"};
     }
 }
@@ -192,7 +215,7 @@ async function writeLog(id, source, ip) {
         await logdb.run("INSERT INTO LOG_TABLE (id, SOURCE_LINK, IP, ACCESSED_AT) VALUES (?, ?, ?, ?)", [id, source, ip, Date.now()]);
         await logdb.close();
     } catch (error) {
-        logger.error(error);
+        logger.error(error.stack);
         return {status: "failed", reason: "Internal Error"};
     }
 }
@@ -214,12 +237,12 @@ async function getIPLog(ip, interval = -1) {
         }
         
     } catch (error) {
-        logger.error(error);
+        logger.error(error.stack);
         return {status: "failed", reason: "Internal Error"};
     }
 }
 
-async function addCLickCount(id) {
+async function addClickCount(id) {
     const db = await open({
         filename: sqlitePath,
         driver: sqlite3.Database
@@ -233,11 +256,11 @@ async function addCLickCount(id) {
         let currentClickCount = queryResult[0]["CLICKCOUNT"];
         await db.run("UPDATE LINK_TABLE SET CLICKCOUNT = ? WHERE id = ?", [currentClickCount + 1, id]);
     } catch (error) {
-        logger.error(error);
+        logger.error(error.stack);
     }
 }
 
-async function resetCLickCount(id) {
+async function resetClickCount(id) {
     const db = await open({
         filename: sqlitePath,
         driver: sqlite3.Database
@@ -250,7 +273,7 @@ async function resetCLickCount(id) {
         }
         await db.run("UPDATE LINK_TABLE SET CLICKCOUNT = ? WHERE id = ?", [0, id]);
     } catch (error) {
-        logger.error(error);
+        logger.error(error.stack);
     }
 }
 
@@ -263,7 +286,7 @@ async function keepLog(retentionTime) {
         await logdb.run("DELETE FROM LOG_TABLE WHERE ACCESSED_AT <= ?", Date.now() - retentionTime);
         await logdb.close();
     } catch (error) {
-        logger.error(error);
+        logger.error(error.stack);
         return {status: "failed", reason: "Internal Error"};
     }
 }
@@ -278,5 +301,6 @@ module.exports.getList = getList;
 module.exports.writeLog = writeLog;
 module.exports.getIPLog = getIPLog;
 module.exports.keepLog = keepLog;
-module.exports.addCLickCount = addCLickCount;
-module.exports.resetCLickCount = resetCLickCount;
+module.exports.addClickCount = addClickCount;
+module.exports.resetClickCount = resetClickCount;
+module.exports.getTarget = getTarget;
