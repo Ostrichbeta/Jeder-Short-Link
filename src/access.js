@@ -7,6 +7,8 @@ const path = require("path");
 const nconf = require("nconf");
 const { accessFrequencyCheck } = require("./security");
 const uap = require('ua-parser-js');
+const cors = require("cors");
+const bodyParser = require("body-parser");
 
 const winston = require("winston");
 const logger = winston.loggers.get("accessLogger");
@@ -14,6 +16,17 @@ const logger = winston.loggers.get("accessLogger");
 let configFile = path.join(path.dirname(__dirname), 'config', 'config.json');
 
 nconf.file({file: configFile});
+
+router.use(bodyParser.json());       // to support JSON-encoded bodies
+router.use(bodyParser.urlencoded({     // to support URL-encoded bodies
+    extended: true
+}));
+
+router.use(cors({
+    credentials: true,
+    origin: "http://localhost:9000",
+    exposedHeaders: ["set-cookie"], 
+}));
 
 router.get("/api/create", sessionCheck, async (req, res) => {
     if (!(req.query.name && req.query.target)) {
@@ -50,7 +63,7 @@ router.get("/api/create", sessionCheck, async (req, res) => {
                     return;
                 }
             } else {
-                let createResult = await database.addLink(req.query.name, req.query.target, parseInt(req.query.expireat) * 1000);
+                let createResult = await database.addLink(req.query.name, req.query.target, parseInt(req.query.expireat));
                 if (createResult["status"] == "success") {
                     res.status(200).json(createResult);
                 } else {
@@ -103,6 +116,33 @@ router.get("/api/remove", sessionCheck, async (req, res) => {
     } catch (error) {
         logger.error(error.stack);
         res.send(500).json({
+            status: "failed",
+            reason: "Internal server error"
+        });
+        return;
+    }
+});
+
+router.post("/api/batchremove", sessionCheck, async (req, res) => {
+    if (!req.body.ids || !(req.body.ids instanceof Array)) {
+        res.status(403).json({
+            status: "failed",
+            reason: "Too few arguments"
+        });
+        return;
+    }
+    try {
+        for (const item of req.body.ids) {
+            await database.removeLinkFromID(item);
+        }
+        res.status(200).json({
+            status: "success",
+            reason: ""
+        });
+        return;
+    } catch (error) {
+        logger.error(error.stack);
+        res.status(500).json({
             status: "failed",
             reason: "Internal server error"
         });
@@ -209,6 +249,37 @@ router.get("/api/resetcount", sessionCheck, async (req, res) => {
     }
 });
 
+router.get("/api/getme", sessionCheck, async (req, res) => {
+    try {
+        if (!req.session) {
+            res.status(401).json({
+                status: "failed",
+                reason: "Unauthorized"
+            });
+            return;
+        } else {
+            let returnBody = {
+                status: "success",
+                user: "",
+                role: undefined
+            }
+            if (req.session.user == "root") {
+                returnBody["user"] = "root";
+            }
+
+            res.status(200).json(returnBody);
+            return;
+        }
+    } catch (error) {
+        logger.error(error.stack);
+        res.send(500).json({
+            status: "failed",
+            reason: "Internal server error"
+        });
+        return;
+    }
+});
+
 router.post("/api/adminlogin", tokenCheck, async (req, res) => {
     try {
         await new Promise((resolve, reject) => {
@@ -232,6 +303,133 @@ router.post("/api/adminlogin", tokenCheck, async (req, res) => {
         res.status(200).json({
             status: "succes",
             reason: ""
+        });
+        return;
+    } catch (error) {
+        logger.error(error.stack);
+        res.status(500).json({
+            status: "failed",
+            reason: "Internal server error"
+        });
+    }
+});
+
+router.get("/api/adduser", sessionCheck, async (req, res) => {
+    try {
+        if (!(req.query.email && req.query.role && [0, 1, 99].includes(parseInt(req.query.role)))) {
+            res.status(403).json({
+                status: "failed",
+                reason: "Too few arguments or Invalid input"
+            });
+            return;
+        }
+        let addResult = await database.addUser(req.query.email, (req.query.comment ? req.query.comment : ""), parseInt(req.query.role));
+        if (addResult["status"] == "success") {
+            res.status(200).json(addResult);
+        } else {
+            res.status(403).json(addResult);
+        }
+        return;
+    } catch (error) {
+        logger.error(error.stack);
+        res.status(500).json({
+            status: "failed",
+            reason: "Internal server error"
+        });
+    }
+});
+
+router.get("/api/getuserlist", sessionCheck, async (req, res) => {
+    try {
+        let getListResult = await database.getUserList();
+        if (getListResult["status"] == "success") {
+            res.status(200).json(getListResult);
+        } else {
+            res.status(403).json(getListResult);
+        }
+        return;
+    } catch (error) {
+        logger.error(error.stack);
+        res.status(500).json({
+            status: "failed",
+            reason: "Internal server error"
+        });
+    }
+});
+
+router.get("/api/getuser", sessionCheck, async (req, res) => {
+    try {
+        if (!req.query.email) {
+            res.status(403).json({
+                status: "failed",
+                reason: "Too few arguments"
+            });
+            return;
+        }
+        let queryResult = await database.getUser(req.query.email);
+        if (queryResult["status"] == "success") {
+            res.status(200).json(queryResult);
+        } else {
+            res.status(404).json(queryResult);
+        }
+        return;
+    } catch (error) {
+        logger.error(error.stack);
+        res.status(500).json({
+            status: "failed",
+            reason: "Internal server error"
+        });
+    }
+});
+
+router.get("/api/removeuser", sessionCheck, async (req, res) => {
+    try {
+        if (!req.query.email) {
+            res.status(403).json({
+                status: "failed",
+                reason: "Too few arguments"
+            });
+            return;
+        }
+
+        let queryResult = await database.addUser(req.query.email);
+        if (queryResult["status"] == "success") {
+            let deleteResult = await database.removeUser(req.query.email);
+            if (deleteResult["status"] == "success") {
+                res.status(200).json(deleteResult);
+            } else {
+                res.status(403).json(deleteResult);
+            }
+            return;
+        } else {
+            res.status(403).json(queryResult);
+            return;
+        }
+    } catch (error) {
+        logger.error(error.stack);
+        res.status(500).json({
+            status: "failed",
+            reason: "Internal server error"
+        });
+    }
+});
+
+router.post("/api/batchremoveuser", sessionCheck, async (req, res) => {
+    try {
+        if (! (req.body && req.body.users && (req.body.users instanceof Array))) {
+            res.status(403).json({
+                status: "failed",
+                reason: "Too few arguments"
+            });
+            return;
+        }
+        for (const item of req.body.users) {
+            await database.removeUser(item);
+        }
+        res.status(200).json({
+            status: "success",
+            reason: "",
+            users: req.body.users
         });
         return;
     } catch (error) {
@@ -275,7 +473,9 @@ router.use("/api/logout", sessionCheck, async (req, res, next) => {
             reason: "Internal server error"
         });
     }
-})
+});
+
+router.use("/admin", express.static("admin-panel"));
 
 router.get("/:link", accessFrequencyCheck, async (req, res) => {
     try {

@@ -40,8 +40,8 @@ async function sleep(ms) {
         resave: false,
         saveUninitialized: false,
         cookie: {
-            maxAge: 600000 // 10 Minutes
-        }
+            maxAge: 600000 // 10 Minutes,
+        },
     }));
 
     app.set('view engine', 'ejs'); // Use ejs to render statis pages

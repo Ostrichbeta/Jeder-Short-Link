@@ -11,6 +11,7 @@ const logger = winston.loggers.get("databaseLogger");
 
 const sqlitePath = path.join(path.dirname(__dirname), 'res', 'database.db');
 const logDBPath = path.join(path.dirname(__dirname), 'res', 'log.db');
+const accountDBPath = path.join(path.dirname(__dirname), 'res', 'accounts.db');
 
 async function initDatabase() {
     const db = await open({
@@ -23,8 +24,21 @@ async function initDatabase() {
     // Add click count
     try {
         await db.exec("ALTER TABLE LINK_TABLE ADD COLUMN CLICKCOUNT INTEGER DEFAULT 0");
-    } catch (error) {
         logger.debug("DB click count patch added.");
+    } catch (error) {
+        if (error) {
+            logger.debug(error);
+        }
+    }
+
+    // Add createdby
+    try {
+        await db.exec("ALTER TABLE LINK_TABLE ADD COLUMN CREATED_BY TEXT DEFAULT 'root'");
+        logger.debug("DB created by patch added.");
+    } catch (error) {
+        if (error) {
+            logger.debug(error);
+        }
     }
     await db.close();
     logger.debug("Link database closed.");
@@ -37,6 +51,15 @@ async function initDatabase() {
     await logdb.run("CREATE TABLE IF NOT EXISTS LOG_TABLE (id TEXT NOT NULL, SOURCE_LINK TEXT NOT NULL, IP TEXT NOT NULL, ACCESSED_AT INTEGER NOT NULL)");
     await logdb.close();
     logger.debug("Link database closed.");
+
+    const accountdb = await open({
+        filename: accountDBPath,
+        driver: sqlite3.Database
+    });
+    logger.debug("Check and create the account database in " + accountDBPath + "...");
+    await accountdb.run("CREATE TABLE IF NOT EXISTS ACCOUNTS (EMAIL TEXT NOT NULL PRIMARY KEY, COMMENT TEXT DEFAULT '', ROLE INTEGER NOT NULL)");
+    await accountdb.close();
+    logger.debug("Account database closed.");
 }
 
 async function addLink(name, targetLink, expireAt = -1) {
@@ -277,6 +300,117 @@ async function resetClickCount(id) {
     }
 }
 
+async function addUser(email, comment, role) {
+    if (email === "" || ![0, 1, 99].includes(role)) {
+        throw new SyntaxError("Invalid input");
+    }
+    try {
+        const accountdb = await open({
+            filename: accountDBPath,
+            driver: sqlite3.Database
+        });
+
+        await accountdb.run("INSERT INTO ACCOUNTS (EMAIL, COMMENT, ROLE) VALUES (?, ?, ?)", email, comment, role);
+        logger.info(`Added user email ${email} with role index ${role}, with comment ${comment}`);
+        return {
+            status: "success",
+            reason: "",
+            user: {
+                email: email,
+                comment: comment,
+                role: role
+            }
+        };
+    } catch (error) {
+        logger.error(error.stack);
+        if (error.message && error.message == 'SQLITE_CONSTRAINT: UNIQUE constraint failed: ACCOUNTS.EMAIL') {
+            return {
+                status: "failed",
+                reason: "Duplicated user"
+            };
+        } else {
+            return {
+                status: "failed",
+                reason: "Internal server error"
+            };
+        }
+    }
+}
+
+async function getUserList() {
+    try {
+        const accountdb = await open({
+            filename: accountDBPath,
+            driver: sqlite3.Database
+        });
+
+        let queryResult = await accountdb.all("SELECT * FROM ACCOUNTS");
+        return {
+            status: "success",
+            reason: "",
+            results: queryResult
+        };
+    } catch (error) {
+        logger.error(error.stack);
+        return {
+            status: "failed",
+            reason: "Internal server error"
+        };
+    }
+}
+
+async function getUser(email) {
+    try {
+        const accountdb = await open({
+            filename: accountDBPath,
+            driver: sqlite3.Database
+        });
+
+        let queryResult = await accountdb.all("SELECT * FROM ACCOUNTS WHERE EMAIL = ?", email);
+        if (queryResult.length != 0) {
+            return {
+                status: "success",
+                reason: "",
+                results: queryResult
+            };
+        } else {
+            return {
+                status: "failed",
+                reason: "Not found",
+                results: queryResult
+            };
+        }
+    } catch (error) {
+        logger.error(error.stack);
+        return {
+            status: "failed",
+            reason: "Internal server error"
+        };
+    }
+}
+
+async function removeUser(email) {
+    try {
+        const accountdb = await open({
+            filename: accountDBPath,
+            driver: sqlite3.Database
+        });
+
+        await accountdb.run("DELETE FROM ACCOUNTS WHERE EMAIL = ?", email);
+        return {
+            status: "success",
+            reason: "",
+            email: email
+        };
+    } catch (error) {
+        logger.error(error.stack);
+        return {
+            status: "failed",
+            reason: "Internal server error"
+        };
+    }
+}
+
 async function keepLog(retentionTime) {
     const logdb = await open({
         filename: logDBPath,
@@ -304,3 +438,7 @@ module.exports.keepLog = keepLog;
 module.exports.addClickCount = addClickCount;
 module.exports.resetClickCount = resetClickCount;
 module.exports.getTarget = getTarget;
+module.exports.addUser = addUser;
+module.exports.getUserList = getUserList;
+module.exports.getUser = getUser;
+module.exports.removeUser = removeUser;
