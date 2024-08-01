@@ -5,6 +5,7 @@ const fs = require("fs");
 const fsExists = require("fs.promises.exists");
 
 const errorLogPath = path.join(path.dirname(__dirname), 'log', 'error.log');
+const accessLogPath = path.join(path.dirname(__dirname), 'log', 'access.log');
 
 async function checkLog() {
     let parentPath = path.dirname(__dirname);
@@ -57,8 +58,8 @@ winston.loggers.add("accessLogger", {
             )
         }),
         new winston.transports.File({
-            filename: errorLogPath,
-            level: "warn",
+            filename: accessLogPath,
+            level: "info",
             format: combine(
                 winston.format(info => ({ ...info, level: info.level.toUpperCase() }))(),
                 timestamp({format: "MM/DD hh:mm:ss.SS A"}), label({label: "ACCESS"}), myFormat, 
@@ -134,5 +135,27 @@ winston.loggers.add("mainLogger", {
 });
 
 winston.loggers.get("loggerLogger").info("Logger for main module initialized.");
+
+winston.loggers.add("authLogger", {
+    level: 'debug', 
+    transports: [
+        new winston.transports.Console({
+            format: combine(
+                winston.format(info => ({ ...info, level: info.level.toUpperCase() }))(),
+                timestamp({format: "MM/DD hh:mm:ss.SS A"}), label({label: "AUTH"}), colorize({all: true}), myFormat, 
+            )
+        }),
+        new winston.transports.File({
+            filename: errorLogPath,
+            level: "warn",
+            format: combine(
+                winston.format(info => ({ ...info, level: info.level.toUpperCase() }))(),
+                timestamp({format: "MM/DD hh:mm:ss.SS A"}), label({label: "AUTH"}), myFormat, 
+            )
+        })
+    ]
+});
+
+winston.loggers.get("loggerLogger").info("Logger for authentication module initialized.");
 
 module.exports.checkLog = checkLog;

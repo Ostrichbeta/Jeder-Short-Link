@@ -12,6 +12,8 @@ const mainLogger = winston.loggers.get("mainLogger");
 const security = require("./src/security");
 const databaseObj = require("./src/database");
 const accessRouter = require("./src/access").router;
+const authRouter = require("./src/auth/AuthNode").router;
+const authTestRouter = require("./src/auth/AuthCheck").router;
 
 const app = express();
 let port = args['port'] ? parseInt(args['port']) : 3000;
@@ -45,8 +47,9 @@ async function sleep(ms) {
     }));
 
     app.set('view engine', 'ejs'); // Use ejs to render statis pages
+    app.use('/auth', authRouter);
+    app.use('/acheck', authTestRouter);
     app.use('/', accessRouter);
-    app.use(cors());
     app.use(bodyParser.json());       // to support JSON-encoded bodies
     app.use(bodyParser.urlencoded({     // to support URL-encoded bodies
         extended: true

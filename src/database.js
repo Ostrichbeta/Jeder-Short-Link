@@ -27,7 +27,9 @@ async function initDatabase() {
         logger.debug("DB click count patch added.");
     } catch (error) {
         if (error) {
-            logger.debug(error);
+            if (error.message != 'SQLITE_ERROR: duplicate column name: CLICKCOUNT') {
+                logger.error(error.stack);
+            }
         }
     }
 
@@ -37,9 +39,13 @@ async function initDatabase() {
         logger.debug("DB created by patch added.");
     } catch (error) {
         if (error) {
-            logger.debug(error);
+            if (error.message != 'SQLITE_ERROR: duplicate column name: CREATED_BY') {
+                logger.error(error.stack);
+            }
         }
     }
+
+
     await db.close();
     logger.debug("Link database closed.");
 
@@ -62,7 +68,7 @@ async function initDatabase() {
     logger.debug("Account database closed.");
 }
 
-async function addLink(name, targetLink, expireAt = -1) {
+async function addLink(name, targetLink, expireAt = -1, user = '') {
     const db = await open({
         filename: sqlitePath,
         driver: sqlite3.Database
@@ -98,10 +104,17 @@ async function addLink(name, targetLink, expireAt = -1) {
         }
         
 
-        const stmt = await db.prepare("INSERT INTO LINK_TABLE (id, name, SOURCE_LINK, TARGET_LINK, CREATED_AT, EXPIRE_AT) VALUES (?, ?, ?, ?, ?, ?)");
-        await stmt.run([id, name, generatedLink, targetLink, Date.now(), expireAt]);
-        await stmt.finalize();
-        await db.close();
+        if (user != '') {
+            const stmt = await db.prepare("INSERT INTO LINK_TABLE (id, name, SOURCE_LINK, TARGET_LINK, CREATED_AT, EXPIRE_AT, CREATED_BY) VALUES (?, ?, ?, ?, ?, ?, ?)");
+            await stmt.run([id, name, generatedLink, targetLink, Date.now(), expireAt, user]);
+            await stmt.finalize();
+            await db.close();
+        } else {
+            const stmt = await db.prepare("INSERT INTO LINK_TABLE (id, name, SOURCE_LINK, TARGET_LINK, CREATED_AT, EXPIRE_AT) VALUES (?, ?, ?, ?, ?, ?)");
+            await stmt.run([id, name, generatedLink, targetLink, Date.now(), expireAt]);
+            await stmt.finalize();
+            await db.close();
+        }
         logger.debug(`A new link /${generatedLink} (ID: ${id}) added, target ${targetLink} expire at ${expireAt}`);
         return {status: "success", reason: "", id: id, source: "/" + generatedLink, target: targetLink, created_at: Date.now(), expire_at: expireAt};
     } catch (error) {
@@ -110,60 +123,116 @@ async function addLink(name, targetLink, expireAt = -1) {
     }
 }
 
-async function getLink(source) {
+async function getLink(source, user = '') {
     const db = await open({
         filename: sqlitePath,
         driver: sqlite3.Database
     });
     try {
         await db.run('DELETE FROM LINK_TABLE WHERE (EXPIRE_AT <> -1 AND EXPIRE_AT <= ?)', Date.now());
-        const result = await db.all('SELECT * FROM LINK_TABLE WHERE SOURCE_LINK = ?', source);
-        await db.close();
-        if (result.length > 0) {
-            return {status: "success", reason: "", results: result};
+        if (user === '') {
+            const result = await db.all('SELECT * FROM LINK_TABLE WHERE SOURCE_LINK = ?', source);
+            await db.close();
+            if (result.length > 0) {
+                return {status: "success", reason: "", results: result};
+            } else {
+                return {status: "failed", reason: "Not found", results: []};
+            }
         } else {
-            return {status: "failed", reason: "Not found", results: []};
+            const result = await db.all('SELECT * FROM LINK_TABLE WHERE (SOURCE_LINK = ? AND CREATED_BY = ?)', source, user);
+            await db.close();
+            if (result.length > 0) {
+                return {status: "success", reason: "", results: result};
+            } else {
+                return {status: "failed", reason: "Not found", results: []};
+            }
         }
+        
     } catch (error) {
         logger.error(error.stack);
         return {status: "failed", reason: "Internal Error"};
     }
 }
 
-async function getID(id) {
-    const db = await open({
-        filename: sqlitePath,
-        driver: sqlite3.Database
-    });
+async function modifyLink(id, name, expireAt) {
     try {
-        await db.run('DELETE FROM LINK_TABLE WHERE (EXPIRE_AT <> -1 AND EXPIRE_AT <= ?)', Date.now());
-        const result = await db.all('SELECT * FROM LINK_TABLE WHERE id = ?', id);
-        await db.close();
-        if (result.length > 0) {
-            return {status: "success", reason: "", results: result};
-        } else {
-            return {status: "failed", reason: "Not found", results: []};
+        const db = await open({
+            filename: sqlitePath,
+            driver: sqlite3.Database
+        });
+        if (name === undefined && expireAt === undefined && !(name instanceof String) && !(expireAt instanceof Number)) {
+            return {status: "failed", reason: "Too few arguments"};
         }
+        if (name !== undefined) {
+            await db.run('UPDATE LINK_TABLE SET name = ? WHERE id = ?', name, id);
+        }
+        if (expireAt !== undefined) {
+            await db.run('UPDATE LINK_TABLE SET EXPIRE_AT = ? WHERE id = ?', expireAt, id);
+        }
+        await db.close();
+        return {status: "success", reason: ""};
     } catch (error) {
         logger.error(error.stack);
         return {status: "failed", reason: "Internal Error"};
     }
 }
 
-async function getTarget(target) {
+async function getID(id, user = '') {
     const db = await open({
         filename: sqlitePath,
         driver: sqlite3.Database
     });
     try {
         await db.run('DELETE FROM LINK_TABLE WHERE (EXPIRE_AT <> -1 AND EXPIRE_AT <= ?)', Date.now());
-        const result = await db.all('SELECT * FROM LINK_TABLE WHERE instr(TARGET_LINK, ?) > 0;', target);
-        await db.close();
-        if (result.length > 0) {
-            return {status: "success", reason: "", results: result};
+        if (user === '') {
+            const result = await db.all('SELECT * FROM LINK_TABLE WHERE id = ?', id);
+            await db.close();
+            if (result.length > 0) {
+                return {status: "success", reason: "", results: result};
+            } else {
+                return {status: "failed", reason: "Not found", results: []};
+            }
         } else {
-            return {status: "failed", reason: "Not found", results: []};
+            const result = await db.all('SELECT * FROM LINK_TABLE WHERE (id = ? AND CREATED_BY = ?)', id, user);
+            await db.close();
+            if (result.length > 0) {
+                return {status: "success", reason: "", results: result};
+            } else {
+                return {status: "failed", reason: "Not found", results: []};
+            }
         }
+        
+    } catch (error) {
+        logger.error(error.stack);
+        return {status: "failed", reason: "Internal Error"};
+    }
+}
+
+async function getTarget(target, user = '') {
+    const db = await open({
+        filename: sqlitePath,
+        driver: sqlite3.Database
+    });
+    try {
+        await db.run('DELETE FROM LINK_TABLE WHERE (EXPIRE_AT <> -1 AND EXPIRE_AT <= ?)', Date.now());
+        if (user === '') {
+            const result = await db.all('SELECT * FROM LINK_TABLE WHERE instr(TARGET_LINK, ?) > 0;', target);
+            await db.close();
+            if (result.length > 0) {
+                return {status: "success", reason: "", results: result};
+            } else {
+                return {status: "failed", reason: "Not found", results: []};
+            }
+        } else {
+            const result = await db.all('SELECT * FROM LINK_TABLE WHERE (instr(TARGET_LINK, ?) > 0 AND CREATED_BY = ?);', target, user);
+            await db.close();
+            if (result.length > 0) {
+                return {status: "success", reason: "", results: result};
+            } else {
+                return {status: "failed", reason: "Not found", results: []};
+            }
+        }
+        
     } catch (error) {
         logger.error(error.stack);
         return {status: "failed", reason: "Internal Error"};
@@ -213,16 +282,24 @@ async function removeLinkFromSourceLink(sourceLink) {
     }
 }
 
-async function getList() {
+async function getList(user = '') {
     const db = await open({
         filename: sqlitePath,
         driver: sqlite3.Database
     });
     try {
-        await db.run('DELETE FROM LINK_TABLE WHERE (EXPIRE_AT <> -1 AND EXPIRE_AT <= ?)', Date.now());
-        const result = await db.all('SELECT * FROM LINK_TABLE');
-        await db.close();
-        return {status: "success", reason: "", results: result};
+        if (user == '') {
+            await db.run('DELETE FROM LINK_TABLE WHERE (EXPIRE_AT <> -1 AND EXPIRE_AT <= ?)', Date.now());
+            const result = await db.all('SELECT * FROM LINK_TABLE');
+            await db.close();
+            return {status: "success", reason: "", results: result};
+        } else {
+            await db.run('DELETE FROM LINK_TABLE WHERE (EXPIRE_AT <> -1 AND EXPIRE_AT <= ?)', Date.now());
+            const result = await db.all('SELECT * FROM LINK_TABLE WHERE CREATED_BY = ?', user);
+            await db.close();
+            return {status: "success", reason: "", results: result};
+        }
+        
     } catch (error) {
         logger.error(error.stack);
         return {status: "failed", reason: "Internal Error"};
@@ -442,3 +519,4 @@ module.exports.addUser = addUser;
 module.exports.getUserList = getUserList;
 module.exports.getUser = getUser;
 module.exports.removeUser = removeUser;
+module.exports.modifyLink = modifyLink;
